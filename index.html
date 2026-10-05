@@ -117,6 +117,22 @@ textarea.field{min-height:130px;resize:vertical}
 .auth p{color:var(--muted);margin:10px 0 20px}
 .msg{font-size:14px;margin-top:12px;color:var(--muted)}
 .msg.err{color:#b3261e}
+/* bilder */
+.imgs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.imgs .th{position:relative;width:96px;height:96px;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--paper);flex:none}
+.imgs .th img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.imgs .th .x{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:14px;line-height:24px;padding:0}
+.imgs .th.busy::after{content:"…";position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.35);color:#fff;font-size:22px}
+.imgs .add{width:96px;height:96px;border-radius:10px;border:1.5px dashed var(--line);background:transparent;color:var(--muted);font-size:13px;display:grid;place-items:center}
+.imgs .add:hover{border-color:var(--accent);color:var(--accent)}
+.imgs.big .th{width:150px;height:150px}
+@media (max-width:520px){.imgs.big .th{width:calc(50% - 4px);height:auto;aspect-ratio:1}}
+.imghint{font-size:12px;color:var(--muted);margin-top:6px}
+@media (hover:none){.imghint{display:none}}
+dialog.lightbox{width:100vw;height:100vh;max-width:none;max-height:none;border:0;border-radius:0;background:rgba(10,8,5,.94);padding:16px;cursor:zoom-out;box-shadow:none}
+dialog.lightbox[open]{display:grid;place-items:center}
+dialog.lightbox::backdrop{background:transparent}
+.lightbox img{max-width:100%;max-height:calc(100vh - 32px);border-radius:8px}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
 .toast.show{opacity:1}
 </style>
@@ -185,6 +201,10 @@ textarea.field{min-height:130px;resize:vertical}
     <input class="field" id="f_frage" required>
     <label for="f_antwort">Antwort</label>
     <textarea class="field" id="f_antwort" placeholder="Was hast du herausgefunden?"></textarea>
+    <label>Bilder</label>
+    <div class="imgs edit" id="f_bilder"></div>
+    <div class="imghint">Tipp: Du kannst Bilder auch mit Strg/⌘+V direkt hier einfügen.</div>
+    <input type="file" id="f_file" accept="image/*" multiple class="hidden">
     <label for="f_quelle">Quelle(n)</label>
     <input class="field" id="f_quelle" placeholder="Link oder Buch, mehrere mit Komma trennen">
     <div class="row">
@@ -235,6 +255,7 @@ textarea.field{min-height:130px;resize:vertical}
   </div>
 </dialog>
 
+<dialog class="lightbox" id="lightbox"><img alt=""></dialog>
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -244,7 +265,7 @@ const SUPABASE_KEY = "sb_publishable_U8ecyihN_24daiwW0_ePkw_eUnyckbD"; // öffen
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const $ = s => document.querySelector(s);
-const state = { items: [], q: "", status: "alle", tag: null, editing: null, signup: false, lastRnd: null };
+const state = { items: [], q: "", status: "alle", tag: null, editing: null, signup: false, lastRnd: null, uid: null, urls: new Map(), imgs: [], removed: [], saved: false };
 
 const esc = s => (s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const norm = s => (s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -271,7 +292,7 @@ async function initAuth(){
 function render(session){
   $("#authView").classList.toggle("hidden", !!session);
   $("#appView").classList.toggle("hidden", !session);
-  if(session) load();
+  if(session){ state.uid = session.user.id; load(); }
 }
 $("#authToggle").onclick = () => {
   state.signup = !state.signup;
@@ -295,10 +316,11 @@ $("#logoutBtn").onclick = () => sb.auth.signOut();
 /* ---------- Daten ---------- */
 async function load(){
   const { data, error } = await sb.from("fragen")
-    .select("id,frage,antwort,quelle,tags,datum,kontext,status,created_at")
+    .select("id,frage,antwort,quelle,tags,datum,kontext,status,bilder,created_at")
     .order("datum", { ascending: false }).order("created_at", { ascending: false });
   if(error){ toast("Laden fehlgeschlagen: " + error.message); return; }
   state.items = data;
+  await signUrls(data.flatMap(i => i.bilder || []));
   draw();
 }
 
@@ -339,11 +361,13 @@ function draw(){
         <span class="badge ${it.status}">${it.status}</span>
         <span>${fmtDate(it.datum)}</span>
         ${it.kontext ? `<span>· ${esc(it.kontext)}</span>` : ""}
+        ${(it.bilder||[]).length ? `<span>📷 ${it.bilder.length}</span>` : ""}
         ${(it.tags||[]).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}
       </div>
       <h3>${highlight(it.frage, state.q)}</h3>
       ${it.antwort ? `<p class="ans">${highlight(it.antwort, state.q)}</p>` : ""}
       <div class="more">
+        ${thumbs(it.bilder, true)}
         ${it.quelle ? `<div><b>Quelle:</b> ${linkify(it.quelle)}</div>` : ""}
         <div class="actions">
           <button class="btn" data-edit="${it.id}">${it.status === "offen" ? "Antwort eintragen" : "Bearbeiten"}</button>
@@ -394,6 +418,8 @@ function openEdit(it){
   $("#f_datum").value = it?.datum || today();
   $("#f_status").value = it?.status || "offen";
   $("#delBtn").classList.toggle("hidden", !it);
+  state.imgs = (it?.bilder || []).map(path => ({ path })); state.removed = []; state.saved = false;
+  drawImgs();
   $("#editDlg").showModal();
 }
 $("#f_antwort").oninput = () => { if($("#f_antwort").value.trim() && $("#f_status").value === "offen" && !$("#f_antwort")._touched){ $("#f_status").value = "beantwortet"; } };
@@ -409,14 +435,18 @@ $("#editForm").onsubmit = async e => {
     kontext: $("#f_kontext").value.trim() || null,
     datum: $("#f_datum").value,
     status: $("#f_status").value,
+    bilder: state.imgs.filter(i => i.path).map(i => i.path),
   };
   const q = state.editing
     ? sb.from("fragen").update(row).eq("id", state.editing.id).select().single()
     : sb.from("fragen").insert(row).select().single();
+  if(state.imgs.some(i => !i.path)){ toast("Bild lädt noch, kurz warten …"); return; }
   const { data, error } = await q;
   if(error){ toast("Fehler: " + error.message); return; }
   if(state.editing) Object.assign(state.editing, data); else { state.items.unshift(data); $("#quickInput").value = ""; }
   $("#f_antwort")._touched = false;
+  state.saved = true;
+  if(state.removed.length) sb.storage.from("bilder").remove(state.removed);
   $("#editDlg").close(); draw(); toast("Gespeichert ✓");
 };
 $("#delBtn").onclick = async () => {
@@ -425,6 +455,7 @@ $("#delBtn").onclick = async () => {
   if(!btn._armed){ btn._armed = true; btn.textContent = "Wirklich löschen?"; setTimeout(() => { btn._armed = false; btn.textContent = "Löschen"; }, 3000); return; }
   btn._armed = false; btn.textContent = "Löschen";
   const { error } = await sb.from("fragen").delete().eq("id", state.editing.id);
+  if(!error){ const all = [...(state.editing.bilder || []), ...state.imgs.filter(i => i.isNew).map(i => i.path)]; if(all.length) sb.storage.from("bilder").remove(all); state.saved = true; }
   if(error){ toast("Fehler: " + error.message); return; }
   state.items = state.items.filter(i => i !== state.editing);
   $("#editDlg").close(); draw(); toast("Gelöscht");
@@ -442,7 +473,7 @@ function showRandom(){
   $("#rndQ").textContent = it.frage;
   const has = !!it.antwort;
   $("#rndBody").innerHTML = has
-    ? `<div class="reveal hidden" id="rndAns">${esc(it.antwort)}${it.quelle ? `<div class="src">Quelle: ${linkify(it.quelle)}</div>` : ""}</div>`
+    ? `<div class="reveal hidden" id="rndAns">${esc(it.antwort)}${thumbs(it.bilder, true)}${it.quelle ? `<div class="src">Quelle: ${linkify(it.quelle)}</div>` : ""}</div>`
     : `<p class="msg">Noch offen. Lust, sie jetzt zu beantworten?</p>`;
   $("#rndReveal").textContent = has ? "Antwort zeigen" : "Beantworten";
   $("#rndReveal").classList.remove("hidden");
@@ -460,6 +491,83 @@ $("#rndClose").onclick = () => $("#rndDlg").close();
 document.addEventListener("keydown", e => {
   if(e.key === "/" && !/INPUT|TEXTAREA/.test(document.activeElement.tagName) && !document.querySelector("dialog[open]")){ e.preventDefault(); $("#q").focus(); }
 });
+
+/* ---------- Bilder ---------- */
+async function signUrls(paths){
+  const need = [...new Set(paths)].filter(p => p && !state.urls.has(p));
+  if(!need.length) return;
+  const { data } = await sb.storage.from("bilder").createSignedUrls(need, 60 * 60 * 12);
+  (data || []).forEach(d => d.signedUrl && state.urls.set(d.path, d.signedUrl));
+}
+function thumbs(paths, big){
+  if(!paths || !paths.length) return "";
+  return `<div class="imgs ${big ? "big" : ""}">${paths.map(p => {
+    const u = state.urls.get(p); return u ? `<div class="th"><img src="${u}" data-full="${u}" loading="lazy" alt=""></div>` : "";
+  }).join("")}</div>`;
+}
+function drawImgs(){
+  $("#f_bilder").innerHTML = state.imgs.map((im, i) => `
+    <div class="th ${im.path ? "" : "busy"}">
+      <img src="${im.preview || state.urls.get(im.path) || ""}" ${im.path ? `data-full="${im.preview || state.urls.get(im.path)}"` : ""} alt="">
+      <button type="button" class="x" data-rm="${i}" aria-label="Bild entfernen">×</button>
+    </div>`).join("") + `<button type="button" class="add" id="addImg">＋ Bild</button>`;
+}
+async function shrink(file){
+  if(file.type === "image/gif" || file.size < 300 * 1024) return file;
+  const bmp = await createImageBitmap(file);
+  const max = 1800, k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, "image/webp", 0.82));
+  return blob && blob.size < file.size ? new File([blob], "bild.webp", { type: "image/webp" }) : file;
+}
+async function addFiles(files){
+  for(const f of files){
+    if(!f.type.startsWith("image/")) continue;
+    const im = { preview: URL.createObjectURL(f), isNew: true };
+    state.imgs.push(im); drawImgs();
+    try{
+      const small = await shrink(f);
+      const ext = (small.type.split("/")[1] || "jpg").replace("jpeg", "jpg");
+      const path = `${state.uid}/${crypto.randomUUID()}.${ext}`;
+      const { error } = await sb.storage.from("bilder").upload(path, small, { contentType: small.type });
+      if(error) throw error;
+      im.path = path;
+      const { data } = await sb.storage.from("bilder").createSignedUrl(path, 60 * 60 * 12);
+      if(data) state.urls.set(path, data.signedUrl);
+    }catch(err){
+      state.imgs = state.imgs.filter(x => x !== im);
+      toast("Bild-Upload fehlgeschlagen: " + (err.message || err));
+    }
+    drawImgs();
+  }
+}
+$("#f_bilder").onclick = e => {
+  if(e.target.closest("#addImg")){ $("#f_file").click(); return; }
+  const rm = e.target.closest("[data-rm]");
+  if(rm){
+    const im = state.imgs[+rm.dataset.rm]; if(!im?.path) return;
+    state.imgs.splice(+rm.dataset.rm, 1);
+    if(im.isNew) sb.storage.from("bilder").remove([im.path]); else state.removed.push(im.path);
+    drawImgs();
+  }
+};
+$("#f_file").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
+$("#editDlg").addEventListener("paste", e => {
+  const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+  if(files.length){ e.preventDefault(); addFiles(files); }
+});
+$("#editDlg").addEventListener("close", () => {
+  if(state.saved) return;
+  const orphans = state.imgs.filter(i => i.isNew && i.path).map(i => i.path);
+  if(orphans.length) sb.storage.from("bilder").remove(orphans);
+});
+document.addEventListener("click", e => {
+  const img = e.target.closest("img[data-full]"); if(!img) return;
+  e.stopPropagation();
+  const lb = $("#lightbox"); lb.querySelector("img").src = img.dataset.full; lb.showModal();
+}, true);
+$("#lightbox").onclick = () => $("#lightbox").close();
 
 initAuth();
 </script>
