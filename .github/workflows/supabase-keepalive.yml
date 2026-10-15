@@ -1,0 +1,47 @@
+# Hält das Supabase-Projekt "fragenbuch" aktiv.
+# Supabase pausiert Projekte im Free-Tarif nach ca. 7 Tagen ohne Aktivität.
+# Dieser Workflow schickt alle 3 Tage eine kleine Leseabfrage an die Datenbank.
+#
+# Ablage im Repo: .github/workflows/supabase-keepalive.yml
+#
+# Benötigte Repository-Secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_URL       z. B. https://dhgstbbagaosivtozbdk.supabase.co
+#   SUPABASE_ANON_KEY  der anon/publishable Key (Supabase → Project Settings → API)
+
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Alle 3 Tage um 06:17 UTC
+    - cron: "17 6 */3 * *"
+  workflow_dispatch: # manuell auslösbar über den Actions-Tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Datenbank anpingen
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Secrets SUPABASE_URL oder SUPABASE_ANON_KEY fehlen."
+            exit 1
+          fi
+
+          status=$(curl -sS -o response.json -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/fragen?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+
+          echo "HTTP-Status: $status"
+
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Ping fehlgeschlagen (HTTP $status). Ist das Projekt pausiert?"
+            cat response.json
+            exit 1
+          fi
+
+          echo "Supabase ist aktiv."
