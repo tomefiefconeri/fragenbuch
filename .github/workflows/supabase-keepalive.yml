@@ -4,9 +4,8 @@
 #
 # Ablage im Repo: .github/workflows/supabase-keepalive.yml
 #
-# Benötigte Repository-Secrets (Settings → Secrets and variables → Actions):
-#   SUPABASE_URL       z. B. https://dhgstbbagaosivtozbdk.supabase.co
-#   SUPABASE_ANON_KEY  der anon/publishable Key (Supabase → Project Settings → API)
+# URL und Publishable Key sind dieselben, die index.html öffentlich nutzt.
+# Optional überschreibbar per Repository-Secrets SUPABASE_URL / SUPABASE_ANON_KEY.
 
 name: Supabase Keep-Alive
 
@@ -23,8 +22,8 @@ jobs:
     steps:
       - name: Datenbank anpingen
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://dhgstbbagaosivtozbdk.supabase.co' }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'sb_publishable_U8ecyihN_24daiwW0_ePkw_eUnyckbD' }}
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "::error::Secrets SUPABASE_URL oder SUPABASE_ANON_KEY fehlen."
